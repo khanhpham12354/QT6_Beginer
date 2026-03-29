@@ -1,0 +1,3 @@
+/Users/khanh12354/WorkPlace/QT6_Beginer/build/CMakeFiles/qt_manual_app.dir
+/Users/khanh12354/WorkPlace/QT6_Beginer/build/CMakeFiles/edit_cache.dir
+/Users/khanh12354/WorkPlace/QT6_Beginer/build/CMakeFiles/rebuild_cache.dir
