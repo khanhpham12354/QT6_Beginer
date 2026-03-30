@@ -14,8 +14,6 @@
 #include "oapv_app_util.h"
 #include "oapv_app_y4m.h"
 
-
-
 // Shader sources
 const char* vertexShaderSource = R"(
 #version 330 core
@@ -37,12 +35,10 @@ uniform sampler2D tex_u;
 uniform sampler2D tex_v;
 
 void main() {
-    // OpenAPV 10-bit data is usually stored in 16-bit
     float raw_y = texture(tex_y, TexCoord).r * 65535.0;
     float raw_u = texture(tex_u, TexCoord).r * 65535.0;
     float raw_v = texture(tex_v, TexCoord).r * 65535.0;
 
-    // YUV BT.2020 Limited Range to RGB
     float y = (raw_y - 64.0) / 876.0;
     float u = (raw_u - 512.0) / 896.0;
     float v = (raw_v - 512.0) / 896.0;
@@ -76,18 +72,12 @@ int main() {
     glfwWindowHint(GLFW_ALPHA_BITS, 2);
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
 
-    // 1. Mở file Y4M bằng FILE* (Yêu cầu bởi oapv_app_y4m.h)
     const char* filePath = "/Users/khanh12354/WorkPlace/pattern1_yuv422p10le_320x240_25fps.y4m";
     FILE* fp = fopen(filePath, "rb");
-    if (!fp) {
-        std::cerr << "Failed to open file!" << std::endl;
-        return -1;
-    }
+    if (!fp) return -1;
 
-    // 2. Parse Header dùng OpenAPV util
     y4m_params_t y4m_params;
     if (y4m_header_parser(fp, &y4m_params) < 0) {
-        std::cerr << "Failed to parse Y4M header!" << std::endl;
         fclose(fp);
         return -1;
     }
@@ -96,20 +86,18 @@ int main() {
     if (!window) { fclose(fp); glfwTerminate(); return -1; }
     glfwMakeContextCurrent(window);
 
-    // 3. Khởi tạo oapv_imgb_t (Buffer của OpenAPV)
     int cs = OAPV_CS_SET(y4m_params.color_format, y4m_params.bit_depth, 0);
     oapv_imgb_t* imgb = imgb_create(y4m_params.w, y4m_params.h, cs);
     if (!imgb) { fclose(fp); return -1; }
 
+    unsigned int program = glCreateProgram();
     unsigned int vs = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
     unsigned int fs = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSource);
-    unsigned int program = glCreateProgram();
     glAttachShader(program, vs);
     glAttachShader(program, fs);
     glLinkProgram(program);
     glUseProgram(program);
 
-    // VAO/VBO Setup
     float vertices[] = { -1,1,0,0,0, 1,1,0,1,0, -1,-1,0,0,1, 1,-1,0,1,1 };
     unsigned int VAO, VBO;
     glGenVertexArrays(1, &VAO); glGenBuffers(1, &VBO);
@@ -120,7 +108,6 @@ int main() {
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    // Texture Setup
     unsigned int textures[3];
     glGenTextures(3, textures);
     auto initTex = [&](int i, int unit, const char* name, int w, int h) {
@@ -131,7 +118,9 @@ int main() {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R16, w, h, 0, GL_RED, GL_UNSIGNED_SHORT, nullptr);
         glUniform1i(glGetUniformLocation(program, name), unit);
     };
-    initTex(0, 0, "tex_y", y4m_params.w, y4m_params.h);
+
+    // Sử dụng imgb->w và imgb->h cho tất cả các texture để đảm bảo tính nhất quán
+    initTex(0, 0, "tex_y", imgb->w[0], imgb->h[0]);
     initTex(1, 1, "tex_u", imgb->w[1], imgb->h[1]);
     initTex(2, 2, "tex_v", imgb->w[2], imgb->h[2]);
 
@@ -143,22 +132,18 @@ int main() {
         if (currentTime - lastTime >= frameDuration) {
             lastTime = currentTime;
 
-            // 4. Đọc dữ liệu vào oapv_imgb_t dùng imgb_read
             if (imgb_read(fp, imgb, y4m_params.w, y4m_params.h, 1) < 0) {
-                fseek(fp, 0, SEEK_SET); // Reset file
+                fseek(fp, 0, SEEK_SET);
                 y4m_header_parser(fp, &y4m_params);
                 continue;
             }
 
             glPixelStorei(GL_UNPACK_ALIGNMENT, 2); 
 
-            // 5. Cập nhật Texture từ oapv_imgb_t
-            // imgb->a[i] là địa chỉ buffer của từng plane
-            // imgb->s[i] là stride (số byte mỗi hàng)
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, textures[0]);
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, imgb->s[0] / 2); // Xử lý Alignment/Stride
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, y4m_params.w, y4m_params.h, GL_RED, GL_UNSIGNED_SHORT, imgb->a[0]);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, imgb->s[0] / 2);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, imgb->w[0], imgb->h[0], GL_RED, GL_UNSIGNED_SHORT, imgb->a[0]);
 
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, textures[1]);
@@ -170,7 +155,7 @@ int main() {
             glPixelStorei(GL_UNPACK_ROW_LENGTH, imgb->s[2] / 2);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, imgb->w[2], imgb->h[2], GL_RED, GL_UNSIGNED_SHORT, imgb->a[2]);
 
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0); // Reset
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 
             glClear(GL_COLOR_BUFFER_BIT);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
